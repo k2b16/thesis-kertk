@@ -8,6 +8,6 @@ Plan and progress of the models:
 | SSD-MobileNetV1 | 100% | 70% |   |
 | SSD | 0% | 0% |   |
 | Tiny YOLOv3 | 0% | 20% | Needs different opset, Delayed, due to hard to find solutions |
-| YOLOv4 | ~~~45%~~ | 0% | Solution on WinML is unstable, See if finding a workaround or new solution |
+| YOLOv4 | ~~45%~~ | 0% | Solution on WinML is unstable, See if finding a workaround or new solution |
 | Faster-RCNN | 0% | 0% |  |
 | Mask-RCNN | 0% | 0% |   |
