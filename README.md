@@ -5,7 +5,7 @@ Using OpenXR 1.14.3 version and MRTK3 Toolkit to make the base of the project. M
 Plan and progress of the models:
 | Model name | WinML | Unity Sentis | Notes |
 |---|---|---|---|
-| SSD-MobileNetV1 | 100% | 70% |   |
+| SSD-MobileNetV1 | 100% | 70% | Works on WinML with stable outcome |
 | SSD | 0% | 0% |   |
 | Tiny YOLOv3 | 0% | 20% | Needs different opset, Delayed, due to hard to find solutions |
 | YOLOv4 | ~~45%~~ | 0% | Solution on WinML is unstable, See if finding a workaround or new solution |
