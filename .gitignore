@@ -20,3 +20,18 @@ Obj_Detect_Sentis/[Bb]uilds/[Ll]ibrary/
 [Ll]ogs/
 .vs/
 .DS_Store
+
+# Python / tooling
+**/.venv/
+**/venv/
+**/__pycache__/
+**/*.pyc
+
+# ML weights (do not commit)
+**/*.pth
+**/*.pt
+**/*.ckpt
+
+# Third-party repos / downloads
+Models/_thirdparty/
+
