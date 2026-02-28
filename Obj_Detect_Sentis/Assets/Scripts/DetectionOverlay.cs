@@ -7,9 +7,9 @@ public class DetectionOverlay : MonoBehaviour
     [System.Serializable]
     public struct Detection
     {
-        // normalized 0..1 in image space
-        public float left, top, right, bottom; // top/left/bottom/right (SSD style)
-        public float score; // 0..1
+        //normalized 0..1
+        public float left, top, right, bottom;
+        public float score;
         public int classId;
     }
 
@@ -39,7 +39,6 @@ public class DetectionOverlay : MonoBehaviour
     {
         WarmPool();
 
-        // hide all
         for (int i = 0; i < _pool.Count; i++)
             _pool[i].gameObject.SetActive(false);
 
@@ -49,12 +48,19 @@ public class DetectionOverlay : MonoBehaviour
             var d = dets[i];
             if (d.score < scoreThreshold) continue;
 
-            float xMin = Mathf.Clamp01(d.left);
-            float xMax = Mathf.Clamp01(d.right);
-            float yMin = Mathf.Clamp01(1f - d.bottom);
-            float yMax = Mathf.Clamp01(1f - d.top);
+            float l = Mathf.Min(d.left, d.right);
+            float r = Mathf.Max(d.left, d.right);
+            float t = Mathf.Min(d.top, d.bottom);
+            float b = Mathf.Max(d.top, d.bottom);
+
+            //if ((r - 1) < 0.0001f || (b - t) < 0.0001f) continue;
+            float xMin = Mathf.Clamp01(l);
+            float xMax = Mathf.Clamp01(r);
+            float yMin = Mathf.Clamp01(1f - b);
+            float yMax = Mathf.Clamp01(1f - t);
 
             var box = _pool[shown++];
+            box.pivot = new Vector2(0.5f, 0.5f);
             box.anchorMin = new Vector2(xMin, yMin);
             box.anchorMax = new Vector2(xMax, yMax);
             box.offsetMin = Vector2.zero;
@@ -66,5 +72,6 @@ public class DetectionOverlay : MonoBehaviour
 
             box.gameObject.SetActive(true);
         }
+        Debug.Log($"Overlay shown: {shown} / dets: {dets.Count}");
     }
 }

@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
@@ -8,14 +9,28 @@ public class SentisSsdRunner : MonoBehaviour
     [Header("Model")]
     public ModelAsset modelAsset;
 
+    [Tooltip("Output probabilities")]
+    public string scoresOutputName = "scores";
+
+    [Tooltip("Output boxes.")]
+    public string boxesOutputName = "boxes";
+
     [Header("Scene refs")]
     public RawImage video;
     public DetectionOverlay overlay;
 
     [Header("Inference")]
-    public BackendType backend = BackendType.CPU;   // alusta CPU-ga, hiljem GPUCompute
-    [Range(0.05f, 0.5f)] public float intervalSec = 0.15f; // 6-7 FPS inference
-    [Range(0f, 1f)] public float scoreThreshold = 0.45f;
+    public BackendType backend = BackendType.CPU;
+    [Range(0.05f, 0.5f)] public float intervalSec = 0.2f;
+    [Range(0f, 1f)] public float scoreThreshold = 0.5f;
+
+    [Header("NMS")]
+    [Range(0.1f, 0.9f)] public float iouThreshold = 0.45f;
+    public int candidateSize = 200;
+    public int maxDetections = 20;
+
+    [Header("Texture -> Tensor")]
+    public CoordOrigin coordOrigin = CoordOrigin.TopLeft;
 
     Worker _worker;
     WebCamTexture _cam;
@@ -23,30 +38,120 @@ public class SentisSsdRunner : MonoBehaviour
     TextureTransform _tx;
     float _nextTime;
 
-    // temp buffers
-    readonly List<DetectionOverlay.Detection> _dets = new();
+    //buffers
+    readonly List<DetectionOverlay.Detection> _final = new();
+    readonly Dictionary<int, List<DetectionOverlay.Detection>> _perClass = new();
+
+    const int ImageSize = 300;
+    const float CenterVariance = 0.1f;
+    const float SizeVariance = 0.2f;
+
+    readonly List<Vector4> _priors = new();
+    bool _priorsReady = false;
+
+    struct Spec
+    {
+        public int fmap;
+        public int shrink;
+        public float boxMin;
+        public float boxMax;
+        public float[] ratios;
+        public Spec(int fmap, int shrink, float boxMin, float boxMax, float[] ratios)
+        { this.fmap = fmap; this.shrink = shrink; this.boxMin = boxMin; this.boxMax = boxMax; this.ratios = ratios; }
+    }
+
+    static readonly Spec[] Specs = new[]
+    {
+    new Spec(19, 16,  60, 105, new float[]{2,3}),
+    new Spec(10, 32, 105, 150, new float[]{2,3}),
+    new Spec(5,  64, 150, 195, new float[]{2,3}),
+    new Spec(3, 100, 195, 240, new float[]{2,3}),
+    new Spec(2, 150, 240, 285, new float[]{2,3}),
+    new Spec(1, 300, 285, 330, new float[]{2,3}),
+};
+
+    void BuildPriors()
+    {
+        _priors.Clear();
+
+        foreach (var spec in Specs)
+        {
+            float scale = (float)ImageSize / spec.shrink;
+
+            for (int j = 0; j < spec.fmap; j++)
+                for (int i = 0; i < spec.fmap; i++)
+                {
+                    float cx = (i + 0.5f) / scale;
+                    float cy = (j + 0.5f) / scale;
+
+                    //small
+                    float size = spec.boxMin;
+                    float w = size / ImageSize;
+                    float h = size / ImageSize;
+                    _priors.Add(new Vector4(cx, cy, w, h));
+
+                    //big
+                    size = Mathf.Sqrt(spec.boxMin * spec.boxMax);
+                    w = size / ImageSize;
+                    h = size / ImageSize;
+                    _priors.Add(new Vector4(cx, cy, w, h));
+
+                    size = spec.boxMin;
+                    w = size / ImageSize;
+                    h = size / ImageSize;
+
+                    foreach (var ar in spec.ratios)
+                    {
+                        float r = Mathf.Sqrt(ar);
+                        _priors.Add(new Vector4(cx, cy, w * r, h / r));
+                        _priors.Add(new Vector4(cx, cy, w / r, h * r));
+                    }
+                }
+        }
+
+        //clamp
+        for (int k = 0; k < _priors.Count; k++)
+        {
+            var p = _priors[k];
+            p.x = Mathf.Clamp01(p.x);
+            p.y = Mathf.Clamp01(p.y);
+            p.z = Mathf.Clamp01(p.z);
+            p.w = Mathf.Clamp01(p.w);
+            _priors[k] = p;
+        }
+
+        _priorsReady = true;
+        Debug.Log("Priors built: " + _priors.Count);
+    }
 
     void Start()
     {
-        // 1) Start camera
-        _cam = new WebCamTexture(640, 480, 30);
+        // Camera
+        var devices = WebCamTexture.devices;
+        Debug.Log("webcams: " + (devices?.Length ?? 0));
+        foreach (var d in devices) Debug.Log("Cam: " + d.name);
+        if (devices == null || devices.Length == 0)
+        {
+            Debug.LogWarning("No webcam devices found. Disabling SentisSsdRunner.");
+            enabled = false;
+            return;
+        }
+
+        _cam = new WebCamTexture(devices[0].name, 640, 480, 30);
         _cam.Play();
+        Debug.Log("Chosen cam:" +  _cam.deviceName);
         if (video != null) video.texture = _cam;
 
-        // 2) Load model + worker
         var model = ModelLoader.Load(modelAsset);
-
-        // API variant A (newer Sentis)
         _worker = new Worker(model, backend);
-
-        // 3) Input tensor (NHWC 1x300x300x3 for SSD Mobilenet V1)
-        _input = new Tensor<float>(new TensorShape(1, 300, 300, 3));
+        _input = new Tensor<float>(new TensorShape(1, 3, 300, 300));
         _tx = new TextureTransform()
             .SetDimensions(300, 300, 3)
-            .SetTensorLayout(TensorLayout.NHWC)
-            .SetCoordOrigin(CoordOrigin.BottomLeft);
+            .SetTensorLayout(TensorLayout.NCHW)
+            .SetCoordOrigin(coordOrigin);
 
         _nextTime = Time.time + 1.0f;
+        BuildPriors();
     }
 
     void Update()
@@ -60,49 +165,171 @@ public class SentisSsdRunner : MonoBehaviour
 
     void RunOnce()
     {
-        // Copy camera -> tensor (no alloc)
         TextureConverter.ToTensor(_cam, _input, _tx);
+        NormalizeInputInPlace(_input);
 
-        // Run inference
         _worker.Schedule(_input);
 
-        // Read SSD outputs
-        var numT = _worker.PeekOutput("num_detections:0") as Tensor<float>;
-        var boxesT = _worker.PeekOutput("detection_boxes:0") as Tensor<float>;
-        var scoresT = _worker.PeekOutput("detection_scores:0") as Tensor<float>;
-        var classesT = _worker.PeekOutput("detection_classes:0") as Tensor<float>;
+        var scoresT = _worker.PeekOutput(scoresOutputName) as Tensor<float>;
+        var boxesT = _worker.PeekOutput(boxesOutputName) as Tensor<float>;
 
-        if (numT == null || boxesT == null || scoresT == null || classesT == null)
+        if (scoresT == null || boxesT == null)
         {
-            Debug.LogError("SSD outputs not found. Check output names in ModelAsset inspector (Sentis).");
+            Debug.LogError($"Outputs not found");
             return;
         }
 
-        float[] num = numT.DownloadToArray();
-        float[] boxes = boxesT.DownloadToArray();     // [N,4] => top,left,bottom,right
-        float[] scores = scoresT.DownloadToArray();   // [N]
-        float[] classes = classesT.DownloadToArray(); // [N]
+        Tensor<float> scoresCPU = scoresT;
+        Tensor<float> boxesCPU = boxesT;
 
-        int n = Mathf.Clamp((int)num[0], 0, scores.Length);
-
-        _dets.Clear();
-        for (int i = 0; i < n; i++)
+        if (backend != BackendType.CPU)
         {
-            int bi = i * 4;
-            _dets.Add(new DetectionOverlay.Detection
-            {
-                top = boxes[bi + 0],
-                left = boxes[bi + 1],
-                bottom = boxes[bi + 2],
-                right = boxes[bi + 3],
-                score = scores[i],
-                classId = (int)classes[i],
-            });
+            scoresCPU = scoresT.ReadbackAndClone();
+            boxesCPU = boxesT.ReadbackAndClone();
         }
 
-        overlay.Render(_dets, scoreThreshold);
+        float[] scores = scoresCPU.DownloadToArray();
+        float[] boxes = boxesCPU.DownloadToArray();
+
+        if (backend != BackendType.CPU)
+        {
+            scoresCPU.Dispose();
+            boxesCPU.Dispose();
+        }
+
+        DecodeAndNms(scoresT.shape, scores, boxesT.shape, boxes);
+        overlay.Render(_final, scoreThreshold);
     }
 
+    void DecodeAndNms(TensorShape scoresShape, float[] scores, TensorShape boxesShape, float[] boxes)
+    {
+        int numPriors = scoresShape[1];
+        int numClasses = scoresShape[2];
+
+        _final.Clear();
+        _perClass.Clear();
+
+        for (int i = 0; i < numPriors; i++)
+        {
+            int bestC = -1;
+            float bestS = 0f;
+
+            int sBase = i * numClasses;
+            for (int c = 1; c < numClasses; c++)
+            {
+                float s = scores[sBase + c];
+                if (s > bestS) { bestS = s; bestC = c; }
+            }
+
+            if (bestC < 0 || bestS < scoreThreshold) continue;
+
+            if (!_priorsReady) BuildPriors();
+            if (_priors.Count != numPriors)
+            {
+                Debug.LogError($"Priors {_priors.Count} != model priors {numPriors}");
+                return;
+            }
+
+            int bBase = i * 4;
+
+            float dx = boxes[bBase + 0];
+            float dy = boxes[bBase + 1];
+            float dw = boxes[bBase + 2];
+            float dh = boxes[bBase + 3];
+
+            var pr = _priors[i];
+
+            float cx = dx * CenterVariance * pr.z + pr.x;
+            float cy = dy * CenterVariance * pr.w + pr.y;
+            float w = Mathf.Exp(dw * SizeVariance) * pr.z;
+            float h = Mathf.Exp(dh * SizeVariance) * pr.w;
+
+            float xmin = cx - w * 0.5f;
+            float ymin = cy - h * 0.5f;
+            float xmax = cx + w * 0.5f;
+            float ymax = cy + h * 0.5f;
+
+            xmin = Mathf.Clamp01(xmin);
+            ymin = Mathf.Clamp01(ymin);
+            xmax = Mathf.Clamp01(xmax);
+            ymax = Mathf.Clamp01(ymax);
+
+            if (xmax <= xmin || ymax <= ymin) continue;
+
+            var d = new DetectionOverlay.Detection
+            {
+                left = xmin,
+                top = ymin,
+                right = xmax,
+                bottom = ymax,
+                score = bestS,
+                classId = bestC
+            };
+
+            if (!_perClass.TryGetValue(bestC, out var list))
+            {
+                list = new List<DetectionOverlay.Detection>();
+                _perClass[bestC] = list;
+            }
+            list.Add(d);
+        }
+
+        foreach (var kv in _perClass)
+        {
+            var kept = HardNms(kv.Value, iouThreshold, candidateSize);
+            _final.AddRange(kept);
+        }
+
+        _final.Sort((a, b) => b.score.CompareTo(a.score));
+        if (_final.Count > maxDetections)
+            _final.RemoveRange(maxDetections, _final.Count - maxDetections);
+    }
+
+    List<DetectionOverlay.Detection> HardNms(List<DetectionOverlay.Detection> dets, float iouThr, int candSize)
+    {
+        dets.Sort((a, b) => b.score.CompareTo(a.score));
+        if (dets.Count > candSize)
+            dets = dets.GetRange(0, candSize);
+
+        var kept = new List<DetectionOverlay.Detection>();
+        for (int i = 0; i < dets.Count; i++)
+        {
+            var d = dets[i];
+            bool keep = true;
+
+            for (int k = 0; k < kept.Count; k++)
+            {
+                if (IoU(d, kept[k]) > iouThr) { keep = false; break; }
+            }
+
+            if (keep) kept.Add(d);
+        }
+        return kept;
+    }
+
+    float IoU(DetectionOverlay.Detection a, DetectionOverlay.Detection b)
+    {
+        float ix1 = Mathf.Max(a.left, b.left);
+        float iy1 = Mathf.Max(a.top, b.top);
+        float ix2 = Mathf.Min(a.right, b.right);
+        float iy2 = Mathf.Min(a.bottom, b.bottom);
+
+        float iw = Mathf.Max(0f, ix2 - ix1);
+        float ih = Mathf.Max(0f, iy2 - iy1);
+        float inter = iw * ih;
+
+        float areaA = (a.right - a.left) * (a.bottom - a.top);
+        float areaB = (b.right - b.left) * (b.bottom - b.top);
+
+        return inter / (areaA + areaB - inter + 1e-5f);
+    }
+
+    static void NormalizeInputInPlace(Tensor<float> t)
+    {
+        var span = t.AsSpan();
+        for (int i = 0; i < span.Length; i++)
+            span[i] = (span[i] * 255f - 127f) / 128f;
+    }
     void OnDestroy()
     {
         _worker?.Dispose();
