@@ -425,7 +425,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c651c455cf0b8a3489fec896b224aad1, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  modelAsset: {fileID: 5022602860645237092, guid: 4f58b0e944b39dc4587aaf4102c96eb4, type: 3}
+  modelAsset: {fileID: 5022602860645237092, guid: 2074f7bcf29d75145be7f9c388fbc3f4, type: 3}
   scoresOutputName: scores
   boxesOutputName: boxes
   video: {fileID: 2460379}

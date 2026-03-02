@@ -166,7 +166,7 @@ public class SentisSsdRunner : MonoBehaviour
     void RunOnce()
     {
         TextureConverter.ToTensor(_cam, _input, _tx);
-        NormalizeInputInPlace(_input);
+        //NormalizeInputInPlace(_input);
 
         _worker.Schedule(_input);
 
@@ -324,12 +324,12 @@ public class SentisSsdRunner : MonoBehaviour
         return inter / (areaA + areaB - inter + 1e-5f);
     }
 
-    static void NormalizeInputInPlace(Tensor<float> t)
-    {
-        var span = t.AsSpan();
-        for (int i = 0; i < span.Length; i++)
-            span[i] = (span[i] * 255f - 127f) / 128f;
-    }
+/* static void NormalizeInputInPlace(Tensor<float> t)
+{
+ var span = t.AsSpan();
+ for (int i = 0; i < span.Length; i++)
+ span[i] = (span[i] * 255f - 127f) / 128f;
+} */
     void OnDestroy()
     {
         _worker?.Dispose();
