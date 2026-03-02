@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
@@ -6,6 +7,9 @@ using Unity.Sentis;
 
 public class SentisSsdRunner : MonoBehaviour
 {
+    public TextAsset labelsTxt;
+    string[] _labels;
+
     [Header("Model")]
     public ModelAsset modelAsset;
 
@@ -124,26 +128,42 @@ public class SentisSsdRunner : MonoBehaviour
         Debug.Log("Priors built: " + _priors.Count);
     }
 
-    void Start()
+    IEnumerator Start()
     {
-        // Camera
+        if (labelsTxt != null) _labels = labelsTxt.text.Split(new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries);
+        else _labels = null;
+
         var devices = WebCamTexture.devices;
         Debug.Log("webcams: " + (devices?.Length ?? 0));
-        foreach (var d in devices) Debug.Log("Cam: " + d.name);
+        foreach (var d in devices) Debug.Log($"Cam: {d.name}, front={d.isFrontFacing}");
+
         if (devices == null || devices.Length == 0)
         {
             Debug.LogWarning("No webcam devices found. Disabling SentisSsdRunner.");
             enabled = false;
-            return;
+            yield break;
         }
 
-        _cam = new WebCamTexture(devices[0].name, 640, 480, 30);
+        //prefer PV cam
+        string chosen = devices[0].name;
+        foreach (var d in devices) if (!d.isFrontFacing) { chosen = d.name; break; }
+
+        _cam = new WebCamTexture(chosen, 896, 504, 30);
         _cam.Play();
-        Debug.Log("Chosen cam:" +  _cam.deviceName);
+        Debug.Log("Chosen cam: " + chosen);
+
+        if (video != null)
+        {
+            video.color = Color.white;
+            video.material = null;
+        }
+
+        while (_cam != null && _cam.isPlaying && _cam.width < 16) yield return null;
         if (video != null) video.texture = _cam;
 
         var model = ModelLoader.Load(modelAsset);
         _worker = new Worker(model, backend);
+
         _input = new Tensor<float>(new TensorShape(1, 3, 300, 300));
         _tx = new TextureTransform()
             .SetDimensions(300, 300, 3)
@@ -156,6 +176,8 @@ public class SentisSsdRunner : MonoBehaviour
 
     void Update()
     {
+        if (_cam == null) return;
+        if (Time.frameCount % 60 == 0) Debug.Log($"Cam playin = {_cam.isPlaying} size={_cam.width}x{_cam.height} updated = {_cam.didUpdateThisFrame}");
         if (_cam == null || !_cam.isPlaying || _cam.width < 16) return;
         if (Time.time < _nextTime) return;
         _nextTime = Time.time + intervalSec;
@@ -263,7 +285,8 @@ public class SentisSsdRunner : MonoBehaviour
                 right = xmax,
                 bottom = ymax,
                 score = bestS,
-                classId = bestC
+                classId = bestC,
+                label = (_labels != null && bestC < _labels.Length) ? _labels[bestC] : bestC.ToString()
             };
 
             if (!_perClass.TryGetValue(bestC, out var list))
@@ -324,12 +347,21 @@ public class SentisSsdRunner : MonoBehaviour
         return inter / (areaA + areaB - inter + 1e-5f);
     }
 
+<<<<<<< HEAD
 /* static void NormalizeInputInPlace(Tensor<float> t)
 {
  var span = t.AsSpan();
  for (int i = 0; i < span.Length; i++)
  span[i] = (span[i] * 255f - 127f) / 128f;
 } */
+=======
+    /*static void NormalizeInputInPlace(Tensor<float> t)
+    {
+        var span = t.AsSpan();
+        for (int i = 0; i < span.Length; i++)
+            span[i] = (span[i] * 255f - 127f) / 128f;
+    }*/
+>>>>>>> 17cac6c (First working model on laptop, normalized ONNX, overlay UI and scene)
     void OnDestroy()
     {
         _worker?.Dispose();

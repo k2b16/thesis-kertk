@@ -35,3 +35,6 @@ Obj_Detect_Sentis/[Bb]uilds/[Ll]ibrary/
 # Third-party repos / downloads
 Models/_thirdparty/
 
+# UWP/WSA certs
+*.pfx
+*.pfx.meta

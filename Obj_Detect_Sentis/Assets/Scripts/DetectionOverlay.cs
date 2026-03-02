@@ -11,6 +11,7 @@ public class DetectionOverlay : MonoBehaviour
         public float left, top, right, bottom;
         public float score;
         public int classId;
+        public string label;
     }
 
     public RectTransform overlayRoot;
@@ -68,7 +69,7 @@ public class DetectionOverlay : MonoBehaviour
 
             var txt = box.GetComponentInChildren<TMP_Text>(true);
             if (txt != null)
-                txt.text = $"{d.classId}  {(d.score * 100f):0}%";
+                txt.text = $"{d.label}  {(d.score * 100f):0}%";
 
             box.gameObject.SetActive(true);
         }
