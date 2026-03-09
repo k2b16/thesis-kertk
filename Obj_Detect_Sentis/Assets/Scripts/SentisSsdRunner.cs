@@ -347,21 +347,12 @@ public class SentisSsdRunner : MonoBehaviour
         return inter / (areaA + areaB - inter + 1e-5f);
     }
 
-<<<<<<< HEAD
-/* static void NormalizeInputInPlace(Tensor<float> t)
-{
- var span = t.AsSpan();
- for (int i = 0; i < span.Length; i++)
- span[i] = (span[i] * 255f - 127f) / 128f;
-} */
-=======
     /*static void NormalizeInputInPlace(Tensor<float> t)
     {
         var span = t.AsSpan();
         for (int i = 0; i < span.Length; i++)
             span[i] = (span[i] * 255f - 127f) / 128f;
     }*/
->>>>>>> 17cac6c (First working model on laptop, normalized ONNX, overlay UI and scene)
     void OnDestroy()
     {
         _worker?.Dispose();
